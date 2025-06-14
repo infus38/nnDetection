@@ -9,7 +9,6 @@ import numpy as np
 from torch import Tensor
 
 from collections import abc
-from torch._six import string_classes
 from typing import Sequence, Union, Any, Mapping, Callable, List
 
 np_str_obj_array_pattern = re.compile(r'[SaUO]')
@@ -137,7 +136,7 @@ def to_tensor(inp: Any) -> Any:
         return {key: to_tensor(inp[key]) for key in inp}
     elif isinstance(inp, tuple) and hasattr(inp, '_fields'):  # namedtuple
         return elem_type(*(to_tensor(d) for d in inp))
-    elif isinstance(inp, abc.Sequence) and not isinstance(inp, string_classes):
+    elif isinstance(inp, abc.Sequence) and not isinstance(inp, (str, bytes)):
         return [to_tensor(d) for d in inp]
     else:
         return inp
