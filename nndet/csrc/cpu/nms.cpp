@@ -13,7 +13,7 @@
 //#include "cpu/vision_cpu.h"
 #include <torch/types.h>
 
-at::Tensor nms_cuda(const at::Tensor& dets, const at::Tensor& scores, float iou_threshold);
+at::Tensor nms_cuda(const at::Tensor& dets, const at::Tensor& scores, const float iou_threshold);
 
 at::Tensor nms(
     const at::Tensor& dets,
