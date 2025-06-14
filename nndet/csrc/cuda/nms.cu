@@ -145,7 +145,7 @@ __global__ void nms_kernel_3d(const int n_boxes, const float iou_threshold, cons
 }
 
 
-at::Tensor nms_cuda(const at::Tensor& dets, const at::Tensor& scores, float iou_threshold) {
+at::Tensor nms_cuda(const at::Tensor& dets, const at::Tensor& scores, const float iou_threshold) {
   /* dets expected as (n_dets, dim) where dim=4 in 2D, dim=6 in 3D */
   AT_ASSERTM(dets.type().is_cuda(), "dets must be a CUDA tensor");
   AT_ASSERTM(scores.type().is_cuda(), "scores must be a CUDA tensor");
