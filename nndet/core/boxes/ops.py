@@ -21,7 +21,7 @@ from numpy import ndarray
 from typing import Union, Sequence, Tuple
 
 
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 
 def box_area_3d(boxes: Tensor) -> Tensor:
@@ -71,7 +71,7 @@ def box_area(boxes: Union[Tensor, ndarray]) -> Union[Tensor, ndarray]:
         return box_area_3d(boxes)
 
 
-@autocast(enabled=False)
+@autocast(device_type='cuda', enabled=False)
 def box_iou(boxes1: Tensor, boxes2: Tensor,  eps: float = 0) -> Tensor:
     """
     Return intersection-over-union (Jaccard index) of boxes.
@@ -102,7 +102,7 @@ def box_iou(boxes1: Tensor, boxes2: Tensor,  eps: float = 0) -> Tensor:
         return box_iou_union_3d(boxes1.float(), boxes2.float(), eps=eps)[0]
 
 
-@autocast(enabled=False)
+@autocast(device_type='cuda', enabled=False)
 def generalized_box_iou(boxes1: Tensor, boxes2: Tensor, eps: float = 0) -> Tensor:
     """
     Generalized box iou
