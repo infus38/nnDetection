@@ -226,7 +226,7 @@ class MemoryEstimatorDetection(MemoryEstimator):
                                    (self.batch_size, *shape[1:]), device=device, dtype=torch.float),
                            }}
                     fixed_mem = torch.cuda.memory_reserved()
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
                         loss_dict, _ = network.train_step(
                             images=inp["images"],
                             targets=inp["targets"],
