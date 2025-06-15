@@ -17,7 +17,7 @@ limitations under the License.
 import torch
 from loguru import logger
 from torch import Tensor
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torchvision.ops.boxes import nms as nms_2d
 
 try:
@@ -53,7 +53,7 @@ def nms_cpu(boxes, scores, thresh):
     return torch.tensor(keep).to(boxes).long()
 
 
-@autocast(enabled=False)
+@autocast(device_type='cuda', enabled=False)
 def nms(boxes: Tensor, scores: Tensor, iou_threshold: float):
     """
     Performs non-maximum suppression
