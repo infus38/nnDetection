@@ -302,7 +302,7 @@ class Predictor:
             transformed = self.post_transform(**transformed)
 
         inp = [transformed[key] for key in self.model_keys]
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
             result = model.inference_step(*inp, batch_num=batch_num)
         result = inverse_transform(**result)
 
