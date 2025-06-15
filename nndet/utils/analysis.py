@@ -32,7 +32,7 @@ import pandas as pd
 import seaborn as sns
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 import matplotlib.pyplot as plt
-plt.style.use('seaborn-deep')
+plt.style.use('seaborn-v0_8-deep')
 from sklearn.metrics import confusion_matrix
 from torch import Tensor
 import SimpleITK as sitk
