@@ -147,7 +147,13 @@ def main():
     logger.add(Path(target_dir) / "consolidate.log", level="DEBUG")
 
     logger.info(f"looking for models in {model_dir}")
-    training_dirs = [get_latest_model(model_dir, fold) for fold in range(num_folds)]
+
+    # Filter out None directories immediately after creation
+    training_dirs = [
+        get_latest_model(model_dir, fold)
+        for fold in range(num_folds)
+        if get_latest_model(model_dir, fold) is not None
+    ]
     logger.info(f"Found training dirs: {training_dirs}")
 
     # model consolidation
