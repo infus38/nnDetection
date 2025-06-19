@@ -105,6 +105,9 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             trainer_cfg=trainer_cfg,
             plan=plan,
         )
+        # Initialize storage for step outputs
+        self.training_step_outputs = []
+        self.validation_step_outputs = []
 
         _classes = [f"class{c}" for c in range(plan["architecture"]["classifier_classes"])]
         self.box_evaluator = BoxEvaluator.create(
@@ -154,7 +157,9 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             batch_num=batch_idx,
         )
         loss = sum(losses.values())
-        return {"loss": loss, **{key: l.detach().item() for key, l in losses.items()}}
+        output = {"loss": loss, **{key: l.detach().item() for key, l in losses.items()}}
+        self.training_step_outputs.append(output)  # Store output
+        return output
 
     def validation_step(self, batch, batch_idx):
         """
@@ -178,8 +183,10 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             loss = sum(losses.values())
 
         self.evaluation_step(prediction=prediction, targets=targets)
-        return {"loss": loss.detach().item(),
-                **{key: l.detach().item() for key, l in losses.items()}}
+        output = {"loss": loss.detach().item(),
+                 **{key: l.detach().item() for key, l in losses.items()}}
+        self.validation_step_outputs.append(output)  # Store output
+        return output
 
     def evaluation_step(
         self,
@@ -233,13 +240,13 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             target=gt_seg,
             )
 
-    def training_epoch_end(self, training_step_outputs):
+    def on_train_epoch_end(self):
         """
         Log train loss to loguru logger
         """
         # process and log losses
         vals = defaultdict(list)
-        for _val in training_step_outputs:
+        for _val in self.training_step_outputs:
             for _k, _v in _val.items():
                 if _k == "loss":
                     vals[_k].append(_v.detach().item())
@@ -251,15 +258,15 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             if _key == "loss":
                 logger.info(f"Train loss reached: {mean_val:0.5f}")
             self.log(f"train_{_key}", mean_val, sync_dist=True)
-        return super().training_epoch_end(training_step_outputs)
+        return super().on_train_epoch_end()
 
-    def validation_epoch_end(self, validation_step_outputs):
+    def on_validation_epoch_end(self):
         """
         Log val loss to loguru logger
         """
         # process and log losses
         vals = defaultdict(list)
-        for _val in validation_step_outputs:
+        for _val in self.validation_step_outputs:
             for _k, _v in _val.items():
                 vals[_k].append(_v)
 
@@ -271,7 +278,7 @@ class RetinaUNetModule(LightningBaseModuleSWA):
 
         # process and log metrics
         self.evaluation_end()
-        return super().validation_epoch_end(validation_step_outputs)
+        return super().on_validation_epoch_end()
 
     def evaluation_end(self):
         """
