@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Hashable, Type, Type
 
 import torch
 import pytorch_lightning as pl
-from pytorch_lightning.core.memory import ModelSummary
+from pytorch_lightning.utilities.model_summary import ModelSummary
 from loguru import logger
 
 from nndet.io.load import save_txt
@@ -104,12 +104,19 @@ class LightningBaseModule(pl.LightningModule):
         """
         return torch.zeros(*self.example_input_array_shape)
 
-    def summarize(self, *args, **kwargs) -> Optional[ModelSummary]:
+    def summarize(self, mode: str = "top", max_depth: int = 1) -> ModelSummary:
         """
-        Save model summary as txt
+        Generate model summary and save it as txt
+
+        Args:
+            mode: The mode for the summary (one of 'top', 'full', ...)
+            max_depth: Maximum depth of layer nesting
+
+        Returns:
+            ModelSummary: the model summary object
         """
-        summary = super().summarize(*args, **kwargs)
-        save_txt(summary, "./network")
+        summary = ModelSummary(self, mode=mode, max_depth=max_depth)
+        save_txt(str(summary), "./network")
         return summary
 
     def inference_step(self, batch: Any, **kwargs) -> Dict[str, Any]:
