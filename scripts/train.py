@@ -262,14 +262,16 @@ def _train(
     if cfg["train"]["mode"].lower() == "resume":
         trainer_kwargs["resume_from_checkpoint"] = train_dir / "model_last.ckpt"
 
-    num_gpus = cfg["trainer_cfg"]["gpus"]
-    logger.info(f"Using {num_gpus} GPUs for training")
+    nb_of_devices = cfg["trainer_cfg"]["devices"]
+    device_type = cfg["trainer_cfg"]["accelerator"]
+    logger.info(f"Using {nb_of_devices} {device_type} for training")
+
     plugins = cfg["trainer_cfg"].get("plugins", None)
     logger.info(f"Using {plugins} plugins for training")
 
     trainer = pl.Trainer(
-        gpus=list(range(num_gpus)) if num_gpus > 1 else num_gpus,
-        accelerator=cfg["trainer_cfg"]["accelerator"],
+        devices=nb_of_devices,
+        accelerator=device_type,
         precision=cfg["trainer_cfg"]["precision"],
         benchmark=cfg["trainer_cfg"]["benchmark"],
         deterministic=cfg["trainer_cfg"]["deterministic"],
