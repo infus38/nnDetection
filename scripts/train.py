@@ -271,8 +271,6 @@ def _train(
         gpus=list(range(num_gpus)) if num_gpus > 1 else num_gpus,
         accelerator=cfg["trainer_cfg"]["accelerator"],
         precision=cfg["trainer_cfg"]["precision"],
-        amp_backend=cfg["trainer_cfg"]["amp_backend"],
-        amp_level=cfg["trainer_cfg"]["amp_level"],
         benchmark=cfg["trainer_cfg"]["benchmark"],
         deterministic=cfg["trainer_cfg"]["deterministic"],
         callbacks=callbacks,
