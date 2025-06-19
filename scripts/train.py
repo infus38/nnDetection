@@ -280,9 +280,9 @@ def _train(
         max_epochs=module.max_epochs,
         enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
         num_sanity_val_steps=10,
-        weights_summary='full',
+        enable_model_summary= True,
         strategy=strategies,
-        terminate_on_nan=True,  # TODO: make modular
+        detect_anomaly=True,  # TODO: make modular
         **trainer_kwargs
     )
     trainer.fit(module, datamodule=datamodule)
