@@ -22,11 +22,20 @@ from loguru import logger
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
 from pytorch_lightning.callbacks import StochasticWeightAveraging
-from pytorch_lightning.trainer.optimizers import _get_default_scheduler_config
 from pytorch_lightning.utilities import rank_zero_warn
 
 from nndet.training.learning_rate import CycleLinear
 
+# drop in replacement for _get_default_scheduler_config which is not available in PL 2.0
+_DEFAULT_SCHEDULER_CONFIG = {
+    "scheduler": None,
+    "interval": "epoch",
+    "frequency": 1,
+    "reduce_on_plateau": False,
+    "monitor": "val_loss",
+    "strict": True,
+    "name": None,
+}
 
 _AVG_FN = Callable[[torch.Tensor, torch.Tensor, torch.LongTensor], torch.FloatTensor]
 
@@ -54,7 +63,13 @@ class BaseSWA(StochasticWeightAveraging):
         """
         super().__init__(
             swa_epoch_start=swa_epoch_start,
-            swa_lrs=None,
+
+            # PyTorch Lightning's StochasticWeightAveraging callback now requires a
+            # valid swa_lrs parameter. Since we're completely overriding the scheduler
+            # logic in our custom implementation, we can safely pass a dummy value
+            # to satisfy the parent class's requirements.
+            swa_lrs=1.,
+
             annealing_epochs=10,
             annealing_strategy="cos",
             avg_fn=avg_fn,
@@ -84,7 +99,7 @@ class BaseSWA(StochasticWeightAveraging):
             self._average_model = self._average_model.to(self._device or pl_module.device)
 
             _scheduler = self.get_swa_scheduler(optimizer)
-            self._swa_scheduler = _get_default_scheduler_config()
+            self._swa_scheduler = _DEFAULT_SCHEDULER_CONFIG.copy()
             if not isinstance(_scheduler, dict):
                 _scheduler = {"scheduler": _scheduler}
             self._swa_scheduler.update(_scheduler)
