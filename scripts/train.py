@@ -279,12 +279,10 @@ def _train(
         logger=pl_logger,
         max_epochs=module.max_epochs,
         enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
-        reload_dataloaders_every_epoch=False,
         num_sanity_val_steps=10,
         weights_summary='full',
         plugins=plugins,
         terminate_on_nan=True,  # TODO: make modular
-        move_metrics_to_cpu=False,
         **trainer_kwargs
     )
     trainer.fit(module, datamodule=datamodule)
