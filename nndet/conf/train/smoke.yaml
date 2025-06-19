@@ -22,8 +22,8 @@ augment_cfg:
   multiprocessing: True # only deactivate this if debugging
 
 trainer_cfg:
-  gpus: 1 # number of gpus
-  accelerator: # distributed backend
+  devices: 1  # or list like [0,1] or "auto"
+  accelerator: "gpu" # accelerator to use for training, e.g. "cpu", "gpu", "tpu"
   precision: "16-mixed" # mixed precision
   # Per default training is deterministic, non-deterministic allows
   # cudnn.benchmark which can give up to 20% performance. Set this to false
