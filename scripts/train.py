@@ -26,7 +26,7 @@ from typing import List
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import MLFlowLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 
 from loguru import logger
 from hydra import initialize_config_module
@@ -251,6 +251,7 @@ def _train(
     checkpoint_cb.CHECKPOINT_NAME_LAST = 'model_last'
     callbacks.append(checkpoint_cb)
     callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+    callbacks.append(ModelSummary(max_depth=-1))
 
     OmegaConf.save(cfg, str(Path(os.getcwd()) / "config.yaml"))
     OmegaConf.save(cfg, str(Path(os.getcwd()) / "config_resolved.yaml"), resolve=True)
@@ -280,7 +281,6 @@ def _train(
         max_epochs=module.max_epochs,
         enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
         num_sanity_val_steps=10,
-        enable_model_summary= True,
         strategy=strategies,
         detect_anomaly=True,  # TODO: make modular
         **trainer_kwargs
