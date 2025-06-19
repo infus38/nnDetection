@@ -266,8 +266,8 @@ def _train(
     device_type = cfg["trainer_cfg"]["accelerator"]
     logger.info(f"Using {nb_of_devices} {device_type} for training")
 
-    plugins = cfg["trainer_cfg"].get("plugins", None)
-    logger.info(f"Using {plugins} plugins for training")
+    strategies = cfg["trainer_cfg"].get("strategies", "auto")
+    logger.info(f"Using {strategies} strategy for training")
 
     trainer = pl.Trainer(
         devices=nb_of_devices,
@@ -281,7 +281,7 @@ def _train(
         enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
         num_sanity_val_steps=10,
         weights_summary='full',
-        plugins=plugins,
+        strategy=strategies,
         terminate_on_nan=True,  # TODO: make modular
         **trainer_kwargs
     )
