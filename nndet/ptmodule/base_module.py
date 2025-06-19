@@ -79,14 +79,14 @@ class LightningBaseModule(pl.LightningModule):
         self.epoch_start_tic = time()
         return super().on_epoch_start()
     
-    def validation_epoch_end(self, validation_step_outputs):
+    def on_validation_epoch_end(self):
         """
         Print time of epoch
         (needed for cluster where progress bar is deactivated)
         """
         self.epoch_end_toc = time()
         logger.info(f"This epoch took {int(self.epoch_end_toc - self.epoch_start_tic)} s")
-        return super().validation_epoch_end(validation_step_outputs)
+        return super().on_validation_epoch_end()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
