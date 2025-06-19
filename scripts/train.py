@@ -276,7 +276,7 @@ def _train(
         callbacks=callbacks,
         logger=pl_logger,
         max_epochs=module.max_epochs,
-        progress_bar_refresh_rate=None if bool(int(os.getenv("det_verbose", 1))) else 0,
+        enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
         reload_dataloaders_every_epoch=False,
         num_sanity_val_steps=10,
         weights_summary='full',
