@@ -282,7 +282,7 @@ def _train(
         enable_progress_bar=bool(int(os.getenv("det_verbose", 1))),
         num_sanity_val_steps=10,
         strategy=strategies,
-        detect_anomaly=True,  # TODO: make modular
+        detect_anomaly=False,  # TODO: make modular
         **trainer_kwargs
     )
     trainer.fit(module, datamodule=datamodule)
