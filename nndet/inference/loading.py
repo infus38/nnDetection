@@ -64,7 +64,8 @@ def load_final_model(
     identifier: str = "last",
     ) -> Sequence[dict]:
     """
-    Load final model from training
+    Load final model from training. If multiple models match the identifier,
+    the most recently modified one is selected.
 
     Args:
         source_models: path to directory where models are saved
@@ -84,16 +85,29 @@ def load_final_model(
     assert num_models == 1, f"load_final_model only supports num_models=1, found {num_models}"
     logger.info(f"Loading {identifier} model")
 
+    # Find all checkpoints containing the identifier
     model_names = list(source_models.glob('*.ckpt'))
     model_names = [m for m in model_names if identifier in str(m.stem)]
-    assert len(model_names) == 1, f"Found wrong number of models, {model_names} in {source_models} with {identifier}"
 
+    if not model_names:
+        raise FileNotFoundError(
+            f"No models found with identifier '{identifier}' in {source_models}. "
+            f"Available files: {[f.name for f in source_models.glob('*.ckpt')]}"
+        )
+
+    # Sort by modification time (newest first)
+    model_names.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+
+    # Select the most recent one
     path = model_names[0]
+    logger.info(f"Selected most recent model: {path.name} (modified {path.stat().st_mtime})")
+
+    # Load the model
     model = MODULE_REGISTRY[cfg["module"]](
         model_cfg=cfg["model_cfg"],
         trainer_cfg=cfg["trainer_cfg"],
         plan=plan,
-        )
+    )
     state_dict = torch.load(path, map_location="cpu", weights_only=False)["state_dict"]
     t = model.load_state_dict(state_dict)
     logger.info(f"Loaded {path} with {t}")
