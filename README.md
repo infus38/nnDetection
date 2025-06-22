@@ -32,10 +32,10 @@ All projects which are based on nnDetection assume that the base image was built
 To build a container (nnDetection Version 0.1) run the following command from the base directory:
 
 ```bash
-docker build -t nndetection:0.1 --build-arg env_det_num_threads=6 --build-arg env_det_verbose=1 .
+docker build -t nndetection:0.1 --build-arg TORCH_CUDA_ARCH_LIST=<CUDA_CC> --build-arg env_det_num_threads=6 --build-arg env_det_verbose=1 .
 ```
 
-(`--build-arg env_det_num_threads=6` and `--build-arg env_det_verbose=1` are optional and are used to overwrite the provided default parameters)
+> Note: If `TORCH_CUDA_ARCH_LIST` is not specified, it defaults to the 'PTX' (intermediate) Compute Capability (CC). To optimize the PyTorch build for your specific device, set `TORCH_CUDA_ARCH_LIST` with the desired CUDA Compute Capability (`CUDA_CC`) version(s) (e.g., 8.0;8.6). [CUDA_CC matrix](https://en.wikipedia.org/wiki/CUDA#GPUs_supported)
 
 The docker container expects data and models in its own `/opt/data` and `/opt/models` directories respectively.
 The directories need to be mounted via docker `-v`. For simplicity and speed, the ENV variables `det_data` and `det_models` can be set in the host system to point to the desired directories. To run:
