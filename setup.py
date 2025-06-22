@@ -102,7 +102,7 @@ setup(
     long_description_content_type='text/markdown',
     install_requires=requirements,
     tests_require=["coverage"],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     author="Division of Medical Image Computing, German Cancer Research Center",
     maintainer_email='m.baumgartner@dkfz-heidelberg.de',
     ext_modules=get_extensions(),
