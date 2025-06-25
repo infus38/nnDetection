@@ -104,10 +104,10 @@ class ONNXModelConverter:
         torch.onnx.export(model=model, args=torch.randn(input_shape), 
                           f=str(output_path),input_names=["input"], 
                           output_names=["output"], dynamic_axes=dynamic_axes,
-                          opset_version=self.config.opset_version)
+                          opset_version=self.config.opset_version,
+                          dynamo=self.config.dynamo, verify=self.config.dynamo)
 
         # Optionally simplify the ONNX IR to reduce complexity and size
-        print(self.config.simplify)
         if self.config.simplify:
             try:
                 model_onnx = onnx.load(str(output_path))
@@ -152,9 +152,11 @@ def parse_args():
     parser.add_argument("model_name", help="Model name (e.g., RetinaUNetV001)")
     parser.add_argument("--fold", type=int, default=0, help="Fold index")
     parser.add_argument("--output", type=Path, help="Output path for ONNX model")
-    parser.add_argument("--opset_version", type=int, default=13, help="ONNX opset version")
+    parser.add_argument("--opset_version", type=int, default=18, help="ONNX opset version")
     parser.add_argument("--simplify", action="store_true", dest="simplify", help="Simplify the produced ONNX IR")
     parser.add_argument("--static_axes", action="store_false", dest="dynamic_axes", help="Use static axes")
+    parser.add_argument("--dynamo", action="store_true", dest="dynamo", help="use torch dynamo for export")
+
 
     return parser.parse_args()
 
@@ -164,6 +166,7 @@ def main():
     config = {"task_id": args.task_id, "model_name": args.model_name, "fold": args.fold,
               "output_path": args.output, "opset_version": args.opset_version, 
               "simplify": args.simplify, "dynamic_axes": args.dynamic_axes,
+              "dynamo": args.dynamo
     }
     converter = ONNXModelConverter(config)
     converter.execute()
