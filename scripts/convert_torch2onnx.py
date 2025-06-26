@@ -2,9 +2,10 @@
 
 import os
 import argparse
+import re
 import warnings
 from pathlib import Path
-from typing import Tuple, Any
+from typing import Tuple, Any, List
 from types import SimpleNamespace
 
 import torch
@@ -14,7 +15,7 @@ from omegaconf import OmegaConf
 from onnxsim import simplify
 
 from nndet.ptmodule import MODULE_REGISTRY
-from nndet.io import get_task, get_training_dir
+from nndet.io import get_task
 from nndet.io.load import load_pickle
 
 
@@ -23,29 +24,69 @@ class ONNXModelConverter:
 
     def __init__(self, config):
         self.config = SimpleNamespace(**config)
-
-    def validate_paths(self) -> Tuple[Path, Path, Path, Path]:
-        """Validate paths required for conversion and return them."""
-        model_root = (
+        # Determine the consolidated directory path
+        self.consolidated_dir = (
             Path(os.getenv("det_models", "/"))
             / get_task(self.config.task_id, name=True)
             / self.config.model_name
+            / "consolidated"
         )
 
-        training_dir = get_training_dir(model_root, self.config.fold)
+        # Validate that the consolidated directory exists
+        if not self.consolidated_dir.exists():
+            raise FileNotFoundError(
+                f"Consolidated folder not found at {self.consolidated_dir}. "
+                "Please run 'nndet_consolidate' first."
+            )
 
-        required_files = {
-            "config": training_dir / "config.yaml",
-            "plan": training_dir / "plan.pkl",
-            "checkpoint": training_dir / "model_best.ckpt",
-        }
+    def get_model_paths(self) -> List[Tuple[Path, Path, Path, int]]:
+        """Get paths for all requested models in consolidated folder"""
 
-        missing_files = [name for name, path in required_files.items() if not path.exists()]
-        if missing_files:
-            raise FileNotFoundError(f"Missing files in {training_dir}")
+        # Find all model checkpoint files in the consolidated folder
+        model_files = list(self.consolidated_dir.glob("model_fold*.ckpt"))
+        if not model_files:
+            raise FileNotFoundError(
+                f"No model files found in consolidated folder: {self.consolidated_dir}"
+            )
 
-        return (required_files["config"],required_files["plan"],
-                required_files["checkpoint"], training_dir)
+        # Extract fold numbers from filenames and create mapping
+        fold_to_path = {}
+        for model_path in model_files:
+            match = re.search(r"fold(\d+)", model_path.stem)
+            if match:
+                fold = int(match.group(1))
+                fold_to_path[fold] = model_path
+
+        # Determine which folds to process based on user input
+        # -- Convert all folds
+        if self.config.fold == -1:
+            selected_folds = list(fold_to_path.keys())
+
+        # -- Convert specific folds
+        elif isinstance(self.config.fold, list):
+            selected_folds = [f for f in self.config.fold if f in fold_to_path]
+            missing = set(self.config.fold) - set(selected_folds)
+            if missing:
+                logger.warning(f"Requested folds {missing} not found in consolidated folder")
+        
+        # -- Convert single fold
+        else:
+            if self.config.fold not in fold_to_path:
+                raise FileNotFoundError(f"Fold {self.config.fold} not found in consolidated folder")
+            selected_folds = [self.config.fold]
+
+        paths = []
+        for fold in selected_folds:
+            paths.append((
+                self.consolidated_dir / "config.yaml",  # Config is same for all folds
+                self.consolidated_dir / "plan.pkl",     # Plan is same for all folds
+                fold_to_path[fold],                     # Specific checkpoint for this fold
+                fold                                    # Fold number
+            ))
+
+        if not paths:
+            raise FileNotFoundError("No matching models found in consolidated folder")
+        return paths
 
     @staticmethod
     def initialize_model(config_path: Path, plan_path: Path) -> Tuple[Any, dict, dict]:
@@ -57,7 +98,7 @@ class ONNXModelConverter:
         # otherwise we cannot get the model class from the registry
         if (module_name := model_config.get("module")) is None:
             raise ValueError("Model configuration missing module specification|field.")
-        
+
         if (model_class := MODULE_REGISTRY.get(module_name)) is None:
             raise ValueError(
                 f"Unregistered model: {module_name}. Available: {sorted(MODULE_REGISTRY.mapping.keys())}"
@@ -89,8 +130,8 @@ class ONNXModelConverter:
 
         return num_channels, tuple(map(int, patch_size))
 
-
-    def convert(self, model: torch.nn.Module, input_shape: Tuple[int, ...], output_path: Path):
+    def convert(self, model: torch.nn.Module, input_shape: Tuple[int, ...],
+               output_path: Path, fold: int):
         """Convert the PyTorch model to ONNX."""
 
         # Skip the channel dimension in dynamic axes because the  number
@@ -102,7 +143,7 @@ class ONNXModelConverter:
         } if self.config.dynamic_axes else None
 
         torch.onnx.export(model=model, args=torch.randn(input_shape), 
-                          f=str(output_path),input_names=["input"], 
+                          f=str(output_path), input_names=["input"],
                           output_names=["output"], dynamic_axes=dynamic_axes,
                           opset_version=self.config.opset_version,
                           dynamo=self.config.dynamo, verify=self.config.dynamo)
@@ -120,57 +161,76 @@ class ONNXModelConverter:
         # Perform a structural check on the generated ONNX IR to  ensure
         # validity
         onnx.checker.check_model(onnx.load(str(output_path)))
-        logger.success(f"ONNX model saved at: {output_path}")
-
+        logger.success(f"ONNX model for fold {fold} saved at: {output_path}")
 
     def execute(self):
         """Execute the model conversion pipeline."""
         logger.info(f"Starting conversion of {self.config.model_name} for task {self.config.task_id}")
+        logger.info(f"Using consolidated folder: {self.consolidated_dir}")
+        logger.info(f"Processing folds: {'all' if self.config.fold == -1 else self.config.fold}")
 
-        config_path, plan_path, checkpoint_path, training_dir = self.validate_paths()
-        model_class, model_config, data_plan = self.initialize_model(config_path, plan_path)
+        model_paths = self.get_model_paths()
+        for config_path, plan_path, checkpoint_path, fold in model_paths:
+            # Initialize and load model architecture
+            model_class, model_config, data_plan = self.initialize_model(config_path, plan_path)
 
-        model_instance = model_class(
-            model_cfg=model_config.get("model_cfg", {}),
-            trainer_cfg=model_config.get("trainer_cfg", {}),
-            plan=data_plan
-        )
-        model_instance.load_state_dict(torch.load(checkpoint_path, map_location="cpu")["state_dict"])
-        model_instance.eval()
+            # Create model instance
+            model_instance = model_class(
+                model_cfg=model_config.get("model_cfg", {}),
+                trainer_cfg=model_config.get("trainer_cfg", {}),
+                plan=data_plan
+            )
 
-        num_channels, input_dims = self.get_input_spec(data_plan)
-        logger.info(f"Model input channels: {num_channels}, input dimensions: {input_dims}")
-        input_shape = (1, num_channels, *input_dims)
+            # Load weights from checkpoint
+            model_instance.load_state_dict(torch.load(checkpoint_path, map_location="cpu")["state_dict"])
+            model_instance.eval()
 
-        output_path = self.config.output_path or training_dir / f"{self.config.model_name}_fold{self.config.fold}.onnx"
-        self.convert(model_instance, input_shape, output_path)
+            # Get input specifications from the data plan
+            num_channels, input_dims = self.get_input_spec(data_plan)
+            logger.info(f"Fold {fold}: Input channels={num_channels}, Dimensions={input_dims}")
+            input_shape = (1, num_channels, *input_dims)
+
+            # Determine output path for this fold's ONNX model
+            if self.config.output_path:
+                output_path = self.config.output_path / f"{self.config.model_name}_fold{fold}.onnx"
+            else: # Default to consolidated directory
+                output_path = self.consolidated_dir / f"{self.config.model_name}_fold{fold}.onnx"
+
+            self.convert(model_instance, input_shape, output_path, fold)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert PyTorch models to ONNX.")
     parser.add_argument("task_id", help="Task ID (e.g., 000)")
     parser.add_argument("model_name", help="Model name (e.g., RetinaUNetV001)")
-    parser.add_argument("--fold", type=int, default=0, help="Fold index")
-    parser.add_argument("--output", type=Path, help="Output path for ONNX model")
+
+    parser.add_argument(
+        "--fold", nargs="*", type=int, default=-1,
+        help="Unspecified will result in all folds (default). Use N for a single fold, or N, S, .. for specific folds"
+    )
+
+    parser.add_argument("--output", type=Path, help="Output directory for ONNX models")
     parser.add_argument("--opset_version", type=int, default=18, help="ONNX opset version")
     parser.add_argument("--simplify", action="store_true", dest="simplify", help="Simplify the produced ONNX IR")
     parser.add_argument("--static_axes", action="store_false", dest="dynamic_axes", help="Use static axes")
     parser.add_argument("--dynamo", action="store_true", dest="dynamo", help="use torch dynamo for export")
 
-
     return parser.parse_args()
+
 
 def main():
     """Main function to run the ONNX conversion."""
     args = parse_args()
-    config = {"task_id": args.task_id, "model_name": args.model_name, "fold": args.fold,
+    folds = -1 if args.fold == [] else args.fold[0] if isinstance(args.fold, list) and len(args.fold) == 1 else args.fold
+
+    config = {"task_id": args.task_id, "model_name": args.model_name, "fold": folds,
               "output_path": args.output, "opset_version": args.opset_version, 
               "simplify": args.simplify, "dynamic_axes": args.dynamic_axes,
               "dynamo": args.dynamo
     }
+
     converter = ONNXModelConverter(config)
     converter.execute()
-
 
 if __name__ == "__main__":
     main()
