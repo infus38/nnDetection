@@ -3,7 +3,6 @@
 import os
 import argparse
 import re
-import warnings
 from pathlib import Path
 from typing import Tuple, Any, List
 from types import SimpleNamespace
@@ -15,7 +14,7 @@ from omegaconf import OmegaConf
 from onnxsim import simplify
 
 from nndet.ptmodule import MODULE_REGISTRY
-from nndet.io import get_task
+from nndet.io import get_task, get_training_dir
 from nndet.io.load import load_pickle
 
 
@@ -24,32 +23,40 @@ class ONNXModelConverter:
 
     def __init__(self, config):
         self.config = SimpleNamespace(**config)
-        # Determine the consolidated directory path
-        self.consolidated_dir = (
+        self.model_root = (
             Path(os.getenv("det_models", "/"))
             / get_task(self.config.task_id, name=True)
             / self.config.model_name
-            / "consolidated"
         )
 
-        # Validate that the consolidated directory exists
-        if not self.consolidated_dir.exists():
+    def get_model_paths(self) -> List[Tuple[Path, Path, Path, int]]:
+        """Get paths for models based on fold specification"""
+
+        if self.config.fold is None: # Consolidated mode - all folds
+            logger.info("Using models from consolidated folder")
+            return self._get_consolidated_paths()
+        elif isinstance(self.config.fold, list): # Specific folds from their own directories
+            return self._get_multi_fold_paths(self.config.fold)
+        else: # Single fold in fold directory
+            return self._get_fold_dir_paths(self.config.fold)
+
+    def _get_consolidated_paths(self) -> List[Tuple[Path, Path, Path, int]]:
+        """Get all paths from consolidated folder"""
+        consolidated_dir = self.model_root / "consolidated"
+
+        if not consolidated_dir.exists():
             raise FileNotFoundError(
-                f"Consolidated folder not found at {self.consolidated_dir}. "
+                f"Consolidated folder not found at {consolidated_dir}. "
                 "Please run 'nndet_consolidate' first."
             )
 
-    def get_model_paths(self) -> List[Tuple[Path, Path, Path, int]]:
-        """Get paths for all requested models in consolidated folder"""
-
-        # Find all model checkpoint files in the consolidated folder
-        model_files = list(self.consolidated_dir.glob("model_fold*.ckpt"))
+        model_files = list(consolidated_dir.glob("model_fold*.ckpt"))
         if not model_files:
             raise FileNotFoundError(
-                f"No model files found in consolidated folder: {self.consolidated_dir}"
+                f"No model files found in consolidated folder: {consolidated_dir}"
             )
 
-        # Extract fold numbers from filenames and create mapping
+        # Extract fold numbers from filenames
         fold_to_path = {}
         for model_path in model_files:
             match = re.search(r"fold(\d+)", model_path.stem)
@@ -57,36 +64,52 @@ class ONNXModelConverter:
                 fold = int(match.group(1))
                 fold_to_path[fold] = model_path
 
-        # Determine which folds to process based on user input
-        # -- Convert all folds
-        if self.config.fold == -1:
-            selected_folds = list(fold_to_path.keys())
-
-        # -- Convert specific folds
-        elif isinstance(self.config.fold, list):
-            selected_folds = [f for f in self.config.fold if f in fold_to_path]
-            missing = set(self.config.fold) - set(selected_folds)
-            if missing:
-                logger.warning(f"Requested folds {missing} not found in consolidated folder")
-        
-        # -- Convert single fold
-        else:
-            if self.config.fold not in fold_to_path:
-                raise FileNotFoundError(f"Fold {self.config.fold} not found in consolidated folder")
-            selected_folds = [self.config.fold]
-
         paths = []
-        for fold in selected_folds:
+        for fold, model_path in fold_to_path.items():
             paths.append((
-                self.consolidated_dir / "config.yaml",  # Config is same for all folds
-                self.consolidated_dir / "plan.pkl",     # Plan is same for all folds
-                fold_to_path[fold],                     # Specific checkpoint for this fold
-                fold                                    # Fold number
+                consolidated_dir / "config.yaml",   # Shared config
+                consolidated_dir / "plan.pkl",      # Shared plan
+                model_path,                         # Specific checkpoint for the fold
+                fold                                # Fold number
             ))
 
         if not paths:
             raise FileNotFoundError("No matching models found in consolidated folder")
         return paths
+
+    def _get_multi_fold_paths(self, folds: List[int]) -> List[Tuple[Path, Path, Path, int]]:
+        """Get paths for multiple folds from their individual directories"""
+        paths = []
+        for fold in folds:
+            try:
+                paths.extend(self._get_fold_dir_paths(fold))
+            except FileNotFoundError as e:
+                logger.warning(f"Skipping fold {fold}: {str(e)}")
+
+        if not paths:
+            raise FileNotFoundError("No valid folds found among specified fold directories")
+        return paths
+
+    def _get_fold_dir_paths(self, fold: int) -> List[Tuple[Path, Path, Path, int]]:
+        """Get paths for a single fold from fold directory"""
+        training_dir = get_training_dir(self.model_root, fold)
+
+        required_files = {
+            "config": training_dir / "config.yaml",
+            "plan": training_dir / "plan.pkl",
+            "checkpoint": training_dir / "model_best.ckpt",
+        }
+
+        missing_files = [name for name, path in required_files.items() if not path.exists()]
+        if missing_files:
+            raise FileNotFoundError(f"Missing files in {training_dir}: {', '.join(missing_files)}")
+
+        return [(
+            required_files["config"],
+            required_files["plan"],
+            required_files["checkpoint"],
+            fold
+        )]
 
     @staticmethod
     def initialize_model(config_path: Path, plan_path: Path) -> Tuple[Any, dict, dict]:
@@ -165,9 +188,12 @@ class ONNXModelConverter:
 
     def execute(self):
         """Execute the model conversion pipeline."""
+        mode_desc = ("consolidated folder" if self.config.fold is None
+                     else f"folds {self.config.fold}" if isinstance(self.config.fold, list)
+                     else f"fold {self.config.fold} directory")
+
         logger.info(f"Starting conversion of {self.config.model_name} for task {self.config.task_id}")
-        logger.info(f"Using consolidated folder: {self.consolidated_dir}")
-        logger.info(f"Processing folds: {'all' if self.config.fold == -1 else self.config.fold}")
+        logger.info(f"Processing mode: {mode_desc}")
 
         model_paths = self.get_model_paths()
         for config_path, plan_path, checkpoint_path, fold in model_paths:
@@ -190,11 +216,11 @@ class ONNXModelConverter:
             logger.info(f"Fold {fold}: Input channels={num_channels}, Dimensions={input_dims}")
             input_shape = (1, num_channels, *input_dims)
 
-            # Determine output path for this fold's ONNX model
+            # Determine output path
             if self.config.output_path:
                 output_path = self.config.output_path / f"{self.config.model_name}_fold{fold}.onnx"
-            else: # Default to consolidated directory
-                output_path = self.consolidated_dir / f"{self.config.model_name}_fold{fold}.onnx"
+            else:
+                output_path = checkpoint_path.parent / f"{self.config.model_name}_fold{fold}.onnx"
 
             self.convert(model_instance, input_shape, output_path, fold)
 
@@ -205,8 +231,9 @@ def parse_args():
     parser.add_argument("model_name", help="Model name (e.g., RetinaUNetV001)")
 
     parser.add_argument(
-        "--fold", nargs="*", type=int, default=-1,
-        help="Unspecified will result in all folds (default). Use N for a single fold, or N, S, .. for specific folds"
+        "--fold", nargs="*", type=int, default=None,
+        help=("Convert specific folds from their own directories (default: all in consolidated). "
+              "For single fold in fold directory, specify one fold number.")
     )
 
     parser.add_argument("--output", type=Path, help="Output directory for ONNX models")
@@ -221,7 +248,14 @@ def parse_args():
 def main():
     """Main function to run the ONNX conversion."""
     args = parse_args()
-    folds = -1 if args.fold == [] else args.fold[0] if isinstance(args.fold, list) and len(args.fold) == 1 else args.fold
+
+    # Process fold argument
+    if args.fold is None:
+        folds = None  # All folds in consolidated
+    elif len(args.fold) == 1:
+        folds = args.fold[0]  # Single fold in their own directory
+    else:
+        folds = args.fold  # Specific folds in their own directories
 
     config = {"task_id": args.task_id, "model_name": args.model_name, "fold": folds,
               "output_path": args.output, "opset_version": args.opset_version, 
