@@ -28,7 +28,7 @@ from nndet.utils.check import env_guard
 from nndet.planning import PLANNER_REGISTRY
 from nndet.io import get_task, get_training_dir
 from nndet.io.load import load_pickle
-from nndet.inference.loading import load_all_models
+from nndet.inference.loading import load_all_models, load_final_model
 from nndet.inference.helper import predict_dir
 from nndet.utils.check import check_data_and_label_splitted
 
@@ -40,6 +40,7 @@ def run(cfg: dict,
         num_tta_transforms: int = None,
         test_split: bool = False,
         num_processes: int = 3,
+        model_fn=load_all_models,
         ):
     """
     Run inference pipeline
@@ -95,7 +96,7 @@ def run(cfg: dict,
                 source_models=training_dir,
                 num_models=num_models,
                 num_tta_transforms=num_tta_transforms,
-                model_fn=load_all_models,
+                model_fn=model_fn,
                 restore=True,
                 case_ids=case_ids,
                 **cfg.get("inference_kwargs", {}),
@@ -133,15 +134,44 @@ def set_arg(cfg: Mapping, key: str, val: Any, force_args: bool) -> Mapping:
                              f"Found {cfg[key]} but expected {val}.")
     return cfg
 
+def predict_for_fold(fold, model_fn, task_name, model, task_model_dir, num_models, num_tta_transforms,
+                     test_split, process, force_args, ov, check, num_processes):
+
+    tdir = get_training_dir(task_model_dir / task_name / model, fold)
+    if test_split and process:
+        raise ValueError("When using the test split option raw data is not supported. Need to add --no_preprocess flag!")
+    cfg = OmegaConf.load(str(tdir / "config.yaml"))
+    cfg = set_arg(cfg, "task", task_name, force_args=force_args)
+    cfg["exp"] = set_arg(cfg["exp"], "fold", fold, force_args=True if fold == -1 else force_args)
+    cfg["exp"] = set_arg(cfg["exp"], "id", model, force_args=force_args)
+    (cfg.merge_with_dotlist(
+        (ov or []) + [
+            "host.parent_data=${oc.env:det_data}",
+            "host.parent_results=${oc.env:det_models}"
+        ]
+    ))
+    [importlib.import_module(imp) for imp in cfg.get("additional_imports", [])]
+    if check:
+        if test_split:
+            raise ValueError("Check is not supported for test split option.")
+        check_data_and_label_splitted(
+            task_name=cfg["task"], test=True, labels=False, full_check=True
+        )
+    run(
+        OmegaConf.to_container(cfg, resolve=True), tdir, process=process,
+        num_models=num_models, num_tta_transforms=num_tta_transforms,
+        test_split=test_split, num_processes=num_processes, model_fn=model_fn,
+    )
+
 
 @env_guard
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('task', type=str, help="Task id e.g. Task12_LIDC OR 12 OR LIDC")
     parser.add_argument('model', type=str, help="model name, e.g. RetinaUNetV0")
-    parser.add_argument('-f', '--fold', type=int, required=False, default=-1,
-                        help="fold to use for prediction. -1 uses the consolidated model",
-                        )
+    parser.add_argument('-f', '--fold', type=int, nargs='*', required=False, default=None,
+                        help="Folds to use for prediction. If omitted, uses all models in the consolidated dir. "
+                             "If one or more folds are specified, uses those folds from their respective training dirs.")
     parser.add_argument('-nmodels', '--num_models', type=int, default=None,
                         required=False,
                         help="number of models for ensemble(per default all models will be used)."
@@ -183,7 +213,7 @@ def main():
 
     args = parser.parse_args()
     model = args.model
-    fold = args.fold
+    folds = args.fold
     task = args.task
     num_models = args.num_models
     num_tta_transforms = args.num_tta
@@ -195,47 +225,21 @@ def main():
 
     task_name = get_task(task, name=True)
     task_model_dir = Path(os.getenv("det_models"))
-    training_dir = get_training_dir(task_model_dir / task_name / model, fold)
-
     process = args.no_preprocess
-    if test_split and process:
-        raise ValueError("When using the test split option raw data is not "
-                         "supported. Need to add --no_preprocess flag!")
 
-    cfg = OmegaConf.load(str(training_dir / "config.yaml"))
-
-    cfg = set_arg(cfg, "task", task_name, force_args=force_args)
-    cfg["exp"] = set_arg(cfg["exp"], "fold", fold,
-                         force_args=True if fold == -1 else force_args)
-    cfg["exp"] = set_arg(cfg["exp"], "id", model, force_args=force_args)
-
-    overwrites = ov if ov is not None else []
-    overwrites.append("host.parent_data=${oc.env:det_data}")
-    overwrites.append("host.parent_results=${oc.env:det_models}")
-    cfg.merge_with_dotlist(overwrites)
-
-    for imp in cfg.get("additional_imports", []):
-        print(f"Additional import found {imp}")
-        importlib.import_module(imp)
-
-    if check:
-        if test_split:
-            raise ValueError("Check is not supported for test split option.")
-        check_data_and_label_splitted(
-            task_name=cfg["task"],
-            test=True,
-            labels=False,
-            full_check=True
+    if not folds:
+        predict_for_fold(
+            -1, load_all_models, task_name, model, task_model_dir,
+            num_models, num_tta_transforms, test_split, process, force_args,
+            ov, check, num_processes
         )
-
-    run(OmegaConf.to_container(cfg, resolve=True),
-        training_dir,
-        process=process,
-        num_models=num_models,
-        num_tta_transforms=num_tta_transforms,
-        test_split=test_split,
-        num_processes=num_processes,
-        )
+    else:
+        for fold in folds:
+            predict_for_fold(
+                fold, lambda *a, **kw: load_final_model(*a, identifier='best', **kw),
+                task_name, model, task_model_dir, 1, num_tta_transforms,
+                test_split, process, force_args, ov, check, num_processes
+            )
 
 
 if __name__ == '__main__':
