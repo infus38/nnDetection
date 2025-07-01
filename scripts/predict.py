@@ -30,6 +30,7 @@ from nndet.io import get_task, get_training_dir
 from nndet.io.load import load_pickle
 from nndet.inference.loading import load_all_models, load_final_model
 from nndet.inference.helper import predict_dir
+from nndet.inference.onnx_helper import onnx_predict_dir
 from nndet.utils.check import check_data_and_label_splitted
 
 
@@ -61,7 +62,8 @@ def run(cfg: dict,
     plan = load_pickle(training_dir / "plan_inference.pkl")
 
     preprocessed_output_dir = Path(cfg["host"]["preprocessed_output_dir"])
-    prediction_dir = training_dir / "test_predictions"
+    # Isolate torch predictions from others
+    prediction_dir = training_dir / "test_predictions" / "torch"
 
     logger.remove()
     logger.add(
@@ -163,9 +165,66 @@ def predict_for_fold(fold, model_fn, task_name, model, task_model_dir, num_model
         test_split=test_split, num_processes=num_processes, model_fn=model_fn,
     )
 
+def onnx_predict_for_fold(
+    fold, model_fn, task_name, model, task_model_dir, num_models, num_tta_transforms,
+    test_split, process, force_args, ov, check, num_processes
+):
+
+    tdir = get_training_dir(task_model_dir / task_name / model, fold)
+    cfg = OmegaConf.load(tdir / "config.yaml")
+    plan = load_pickle(tdir / "plan_inference.pkl")
+    pre_dir = Path(cfg["host"]["preprocessed_output_dir"])
+
+    # Isolate ONNX predictions from torch one
+    prediction_dir = tdir / "test_predictions" / "onnx"
+    prediction_dir.mkdir(parents=True, exist_ok=True)
+
+    # Data source selection:
+    # - Test split: use predefined cases from split file
+    # - Validation: scan entire directory (case_ids=None)
+    source_dir, case_ids = (
+        (pre_dir / plan["data_identifier"] / "imagesTr", load_pickle(tdir / "splits.pkl")[0]["test"])
+        if test_split else
+        (pre_dir / plan["data_identifier"] / "imagesTs", None)
+    )
+
+    # Find ONNX model paths for ensemble
+    if fold == -1:
+        # Consolidated: use all ONNX models in the folder
+        candidates = sorted(tdir.glob(f"{model}_fold*.onnx"))
+        if not candidates:
+            # fallback to single model.onnx if no fold models found
+            candidates = [tdir / "model.onnx"] if (tdir / "model.onnx").exists() else []
+    else:
+        candidates = [tdir / f"{model}_fold{fold}.onnx"]
+        if not candidates[0].exists():
+            candidates = [tdir / "model.onnx"] if (tdir / "model.onnx").exists() else []
+
+    onnx_model_paths = [c for c in candidates if c.exists()]
+    if not onnx_model_paths:
+        raise FileNotFoundError(f"ONNX model(s) not found in {tdir}. Please export your model(s) to ONNX first.")
+
+    logger.info(f"Starting ONNX prediction using models: {onnx_model_paths}")
+
+    if len(onnx_model_paths) == 1:
+        # Single model, use standard prediction
+        onnx_predict_dir(source_dir=source_dir, target_dir=prediction_dir,
+            onnx_model_path=onnx_model_paths[0], plan=plan,
+            case_ids=case_ids, restore=True,
+        )
+    else:
+        # Ensemble prediction
+        from nndet.inference.onnx_helper import onnx_predict_ensemble_dir
+        onnx_predict_ensemble_dir(
+            source_dir=source_dir, target_dir=prediction_dir,
+            onnx_model_paths=onnx_model_paths, plan=plan,
+            case_ids=case_ids, restore=True,
+        )
+
 
 @env_guard
 def main():
+
     parser = argparse.ArgumentParser()
     parser.add_argument('task', type=str, help="Task id e.g. Task12_LIDC OR 12 OR LIDC")
     parser.add_argument('model', type=str, help="model name, e.g. RetinaUNetV0")
@@ -210,6 +269,8 @@ def main():
                         type=int, default=3, required=False,
                         help="Number of processes to use for resampling.",
                         )
+    parser.add_argument('--onnx', action='store_true', help="Use ONNX model for prediction instead of PyTorch.")
+
 
     args = parser.parse_args()
     model = args.model
@@ -222,20 +283,26 @@ def main():
     test_split = args.test_split
     check = args.check
     num_processes = args.num_processes_preprocessing
+    use_onnx = args.onnx
 
     task_name = get_task(task, name=True)
     task_model_dir = Path(os.getenv("det_models"))
     process = args.no_preprocess
 
+    if use_onnx:
+        predict_func = onnx_predict_for_fold
+    else:
+        predict_func = predict_for_fold
+
     if not folds:
-        predict_for_fold(
+        predict_func(
             -1, load_all_models, task_name, model, task_model_dir,
             num_models, num_tta_transforms, test_split, process, force_args,
             ov, check, num_processes
         )
     else:
         for fold in folds:
-            predict_for_fold(
+            predict_func(
                 fold, lambda *a, **kw: load_final_model(*a, identifier='best', **kw),
                 task_name, model, task_model_dir, 1, num_tta_transforms,
                 test_split, process, force_args, ov, check, num_processes
