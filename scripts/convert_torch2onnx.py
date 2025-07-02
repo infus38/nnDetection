@@ -17,6 +17,43 @@ from nndet.ptmodule import MODULE_REGISTRY
 from nndet.io import get_task, get_training_dir
 from nndet.io.load import load_pickle
 
+class ONNXExportWrapper(torch.nn.Module):
+    """A wrapper for PyTorch models to flatten their outputs for ONNX export."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        # Forward pass that calls the wrapped  model  and  flattens  its
+        # output into a tuple of tensors suitable for ONNX export.
+        output = self.model(x)
+        return self._flatten_outputs(output)
+
+    def _flatten_outputs(self, output):
+        # Recursively traverses the model output, which  may  be  nested
+        # dictionaries, lists, tuples, or single tensors,  and  flattens
+        # them into a single tuple  of  tensors.  Also  collects  output
+        # names corresponding to each tensor
+        flat = []
+        self.output_names = []
+
+        def recurse(o, prefix="output"):
+            if isinstance(o, torch.Tensor):
+                self.output_names.append(prefix)
+                flat.append(o)
+            elif isinstance(o, dict):
+                for k, v in o.items():
+                    recurse(v, f"{prefix}_{k}")
+            elif isinstance(o, (list, tuple)):
+                for i, v in enumerate(o):
+                    recurse(v, f"{prefix}_{i}")
+            else:
+                raise TypeError(f"Unsupported output type: {type(o)}")
+
+        recurse(output) # recursive flattening from the top-level output
+        return tuple(flat)
+
 
 class ONNXModelConverter:
     """Handles the conversion of a PyTorch model to ONNX format."""
@@ -153,21 +190,33 @@ class ONNXModelConverter:
 
         return num_channels, tuple(map(int, patch_size))
 
-    def convert(self, model: torch.nn.Module, input_shape: Tuple[int, ...],
+    def convert(self, model: ONNXExportWrapper, input_shape: Tuple[int, ...],
                output_path: Path, fold: int):
         """Convert the PyTorch model to ONNX."""
+
+        dummy_input = torch.randn(input_shape)
+
+        # Extract output names from the torch model
+        with torch.no_grad():
+            _ = model(dummy_input)
+            output_names = model.output_names
+            logger.info(f"Model outputs: {output_names}")
 
         # Skip the channel dimension in dynamic axes because the  number
         # of input channels, is determined by the model architecture and
         # can't vary without changing model weights or layers
-        dynamic_axes = {
-            "input": {0: "batch", 2: "depth", 3: "height", 4: "width"},
-            "output": {0: "batch"},
-        } if self.config.dynamic_axes else None
+        dynamic_axes = None
+        if self.config.dynamic_axes:
+            dynamic_axes = {
+                "input": {0: "batch", 2: "depth", 3: "height", 4: "width"}
+            }
+            # Add dynamic axes for each output tensor
+            for name in output_names:
+                dynamic_axes[name] = {0: "batch"}
 
-        torch.onnx.export(model=model, args=torch.randn(input_shape), 
+        torch.onnx.export(model=model, args=dummy_input,
                           f=str(output_path), input_names=["input"],
-                          output_names=["output"], dynamic_axes=dynamic_axes,
+                          output_names=output_names, dynamic_axes=dynamic_axes,
                           opset_version=self.config.opset_version,
                           dynamo=self.config.dynamo, verify=self.config.dynamo)
 
@@ -222,7 +271,7 @@ class ONNXModelConverter:
             else:
                 output_path = checkpoint_path.parent / f"{self.config.model_name}_fold{fold}.onnx"
 
-            self.convert(model_instance, input_shape, output_path, fold)
+            self.convert(ONNXExportWrapper(model_instance), input_shape, output_path, fold)
 
 
 def parse_args():
