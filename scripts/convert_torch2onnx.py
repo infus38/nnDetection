@@ -18,41 +18,82 @@ from nndet.io import get_task, get_training_dir
 from nndet.io.load import load_pickle
 
 class ONNXExportWrapper(torch.nn.Module):
-    """A wrapper for PyTorch models to flatten their outputs for ONNX export."""
+    """A wrapper for PyTorch models to structure their outputs for ONNX export.
+
+    This wrapper handles nnDetection  model  outputs  which  follow  the
+    standard format:
+    * Returns    3-tuple:    (pred_detection,     anchors,     pred_seg)
+    * pred_detection: Dict[str, Tensor] - contains raw detection outputs
+    * anchors: List[Tensor] - reference boxes for decoding (concatenated
+      into single tensor for ONNX)
+    * pred_seg: Dict[str, Tensor] or None - segmentation outputs  (e.g.,
+      seg_logits)
+
+    """
 
     def __init__(self, model):
         super().__init__()
         self.model = model
 
     def forward(self, x):
-        # Forward pass that calls the wrapped  model  and  flattens  its
-        # output into a tuple of tensors suitable for ONNX export.
-        output = self.model(x)
-        return self._flatten_outputs(output)
+        # Forward pass that calls the wrapped model and structures its
+        # output to match the expected PyTorch model output format.
+        model_output = self.model(x)
 
-    def _flatten_outputs(self, output):
-        # Recursively traverses the model output, which  may  be  nested
-        # dictionaries, lists, tuples, or single tensors,  and  flattens
-        # them into a single tuple  of  tensors.  Also  collects  output
-        # names corresponding to each tensor
-        flat = []
+        # Handle nnDetection model output formats
+        if isinstance(model_output, tuple) and len(model_output) == 3:
+            # Standard nnDetection format: (pred_detection, anchors, pred_seg)
+            pred_detection, anchors, pred_seg = model_output
+        else:
+            # This shouldn't happen with current nnDetection models, but add safety
+            output_type = type(model_output)
+            output_len = len(model_output) if hasattr(model_output, '__len__') else 'unknown'
+            raise ValueError(
+                f"Unexpected model output format. Expected 3-tuple, "
+                f"got {output_type} with length {output_len}"
+            )
+
+        return self._structure_outputs(pred_detection, anchors, pred_seg)
+
+    def _structure_outputs(self, pred_detection, anchors, pred_seg):
+        # Dynamically structure the outputs to exactly match PyTorch model format
+        # while making them suitable for ONNX export
+        outputs = []
         self.output_names = []
 
-        def recurse(o, prefix="output"):
-            if isinstance(o, torch.Tensor):
-                self.output_names.append(prefix)
-                flat.append(o)
-            elif isinstance(o, dict):
-                for k, v in o.items():
-                    recurse(v, f"{prefix}_{k}")
-            elif isinstance(o, (list, tuple)):
-                for i, v in enumerate(o):
-                    recurse(v, f"{prefix}_{i}")
+        # Dynamically add all detection outputs (preserving original key names)
+        if pred_detection is not None:
+            if isinstance(pred_detection, dict):
+                for key, tensor in pred_detection.items():
+                    if isinstance(tensor, torch.Tensor):
+                        outputs.append(tensor)
+                        self.output_names.append(key)
             else:
-                raise TypeError(f"Unsupported output type: {type(o)}")
+                raise ValueError(f"Expected pred_detection to be a dict, got {type(pred_detection)}")
 
-        recurse(output) # recursive flattening from the top-level output
-        return tuple(flat)
+        # Add anchors (concatenated from list to single tensor)
+        if anchors is not None:
+            if isinstance(anchors, list) and len(anchors) > 0:
+                anchors_concat = torch.cat(anchors, dim=0)
+                outputs.append(anchors_concat)
+                self.output_names.append("anchors")
+            elif isinstance(anchors, torch.Tensor):
+                outputs.append(anchors)
+                self.output_names.append("anchors")
+            else:
+                raise ValueError(f"Expected anchors to be a list or tensor, got {type(anchors)}")
+
+        # Dynamically add all segmentation outputs if present (preserving original key names)
+        if pred_seg is not None:
+            if isinstance(pred_seg, dict):
+                for key, tensor in pred_seg.items():
+                    if isinstance(tensor, torch.Tensor):
+                        outputs.append(tensor)
+                        self.output_names.append(key)
+            else:
+                raise ValueError(f"Expected pred_seg to be a dict, got {type(pred_seg)}")
+
+        return tuple(outputs)
 
 
 class ONNXModelConverter:
