@@ -285,7 +285,13 @@ def _train(
         detect_anomaly=False,  # TODO: make modular
         **trainer_kwargs
     )
-    trainer.fit(module, datamodule=datamodule)
+
+    try:
+        trainer.fit(module, datamodule=datamodule)
+    finally:
+        # Always cleanup augmenter processes, even if training fails
+        logger.info("Performing datamodule teardown...")
+        datamodule.teardown()
 
     if do_sweep:
         case_ids = splits[cfg["exp"]["fold"]]["val"]

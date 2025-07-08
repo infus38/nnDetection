@@ -108,6 +108,10 @@ class Datamodule(BaseModule):
         self.augmentation: Optional[Type[AugmentationSetup]] = None
         self.patch_size_generator: Optional[Sequence[int]] = None
 
+        # Track augmenter instances for proper cleanup
+        self._train_augmenter = None
+        self._val_augmenter = None
+
     @property
     def patch_size(self):
         """
@@ -215,7 +219,7 @@ class Datamodule(BaseModule):
             **self.dataloader_kwargs,
             )
 
-        tr_gen = get_augmenter(
+        self._train_augmenter = get_augmenter(
             dataloader=dl_tr,
             transform=self.augmentation.get_training_transforms(),
             num_processes=min(int(self.augment_cfg.get('num_threads', 12)), 16) - 1,
@@ -225,7 +229,7 @@ class Datamodule(BaseModule):
             pin_memory=True,
             )
         logger.info("TRAINING KEYS:\n %s" % (str(self.dataset_tr.keys())))
-        return tr_gen
+        return self._train_augmenter
 
     def val_dataloader(self):
         """
@@ -250,7 +254,7 @@ class Datamodule(BaseModule):
             **self.dataloader_kwargs,
             )
 
-        val_gen = get_augmenter(
+        self._val_augmenter = get_augmenter(
             dataloader=dl_val,
             transform=self.augmentation.get_validation_transforms(),
             num_processes=min(int(self.augment_cfg.get('num_threads', 12)), 16) - 1,
@@ -260,4 +264,30 @@ class Datamodule(BaseModule):
             pin_memory=True,
             )
         logger.info("VALIDATION KEYS:\n %s" % (str(self.dataset_val.keys())))
-        return val_gen
+        return self._val_augmenter
+
+    def teardown(self, stage: str = None):
+        """ Clean up multiprocessing augmenters """
+        logger.info("Cleaning up MultiThreadedAugmenter instances...")
+
+        if self._train_augmenter is not None:
+            try:
+                if hasattr(self._train_augmenter, '_finish'):
+                    logger.debug("Cleaning up training augmenter")
+                    self._train_augmenter._finish()
+            except Exception as e:
+                logger.warning(f"Error during training augmenter cleanup: {e}")
+            finally:
+                self._train_augmenter = None
+
+        if self._val_augmenter is not None:
+            try:
+                if hasattr(self._val_augmenter, '_finish'):
+                    logger.debug("Cleaning up validation augmenter")
+                    self._val_augmenter._finish()
+            except Exception as e:
+                logger.warning(f"Error during validation augmenter cleanup: {e}")
+            finally:
+                self._val_augmenter = None
+
+        logger.info("MultiThreadedAugmenter cleanup completed")
