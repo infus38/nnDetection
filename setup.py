@@ -1,29 +1,10 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 from pathlib import Path
 import os
 import sys
 
 import torch
 from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension, CUDA_HOME
-
-
-def resolve_requirements(file):
-    requirements = []
-    with open(file) as f:
-        req = f.read().splitlines()
-        for r in req:
-            if r.startswith("-r"):
-                requirements += resolve_requirements(
-                    os.path.join(os.path.dirname(file), r.split(" ")[1]))
-            else:
-                requirements.append(r)
-    return requirements
-
-
-def read_file(file):
-    with open(file) as f:
-        content = f.read()
-    return content
 
 
 def clean():
@@ -33,105 +14,89 @@ def clean():
 
 def get_extensions():
     """
-    Adapted from https://github.com/pytorch/vision/blob/master/setup.py
-    and https://github.com/facebookresearch/detectron2/blob/master/setup.py
+    Build C++/CUDA extensions for nnDetection.
     """
-    print("Build csrc")
-    print("Building with {}".format(sys.version_info))
+    print("=" * 60)
+    print("Building nnDetection C++/CUDA extensions")
+    print(f"Python version: {sys.version_info}")
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"CUDA_HOME: {CUDA_HOME}")
+    print("=" * 60)
 
     this_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-    extensions_dir = this_dir/'nndet'/'csrc'
+    extensions_dir = this_dir / 'nndet' / 'csrc'
 
+    # Collect source files
     main_file = list(extensions_dir.glob('*.cpp'))
-    source_cpu = []  # list((extensions_dir/'cpu').glob('*.cpp')) temporary until I added header files ...
-    source_cuda = list((extensions_dir/'cuda').glob('*.cu'))
-    print("main_file {}".format(main_file))
-    print("source_cpu {}".format(source_cpu))
-    print("source_cuda {}".format(source_cuda))
+    source_cpu = []  # Empty for now - add when CPU-specific files are needed
+    source_cuda = list((extensions_dir / 'cuda').glob('*.cu'))
+
+    print(f"Main C++ files: {[f.name for f in main_file]}")
+    print(f"CPU source files: {[f.name for f in source_cpu]}")
+    print(f"CUDA source files: {[f.name for f in source_cuda]}")
 
     sources = main_file + source_cpu
     extension = CppExtension
-
     define_macros = []
-    extra_compile_args = {"cxx": []}
+    extra_compile_args = {"cxx": ["-O3", "-std=c++17"]}
 
-    if (torch.cuda.is_available() and CUDA_HOME is not None) or os.getenv('FORCE_CUDA', '0') == '1':
-        print("Adding CUDA csrc to build")
-        print("CUDA ARCH {}".format(os.getenv("TORCH_CUDA_ARCH_LIST")))
+    # Check if we should build with CUDA support
+    build_cuda = (
+        (torch.cuda.is_available() and CUDA_HOME is not None) or
+        os.getenv('FORCE_CUDA', '0') == '1'
+    )
+
+    if build_cuda:
+        print("Building with CUDA support")
+        print(f"CUDA_ARCH_LIST: {os.getenv('TORCH_CUDA_ARCH_LIST', 'auto')}")
+
         extension = CUDAExtension
         sources += source_cuda
         define_macros += [('WITH_CUDA', None)]
         extra_compile_args["nvcc"] = [
+            "-O3",
             "-DCUDA_HAS_FP16=1",
             "-D__CUDA_NO_HALF_OPERATORS__",
             "-D__CUDA_NO_HALF_CONVERSIONS__",
             "-D__CUDA_NO_HALF2_OPERATORS__",
         ]
-        
-        # It's better if pytorch can do this by default ..
-        CC = os.environ.get("CC", None)
-        if CC is not None:
-            extra_compile_args["nvcc"].append("-ccbin={}".format(CC))
 
-    sources = [os.path.join(extensions_dir, s) for s in sources]
-    include_dirs = [str(extensions_dir)]
-    
+        # Use custom compiler if specified
+        cc = os.environ.get("CC", None)
+        if cc is not None:
+            extra_compile_args["nvcc"].append(f"-ccbin={cc}")
+    else:
+        print("Building without CUDA support")
+
+    # Convert Path objects to strings (keep them relative!)
+    sources = [str(s.relative_to(this_dir)) for s in sources]
+    include_dirs = [str(extensions_dir.relative_to(this_dir))]
+
+    print(f"Extension type: {extension.__name__}")
+    print(f"Source files: {len(sources)} files")
+    print(f"Include directories: {include_dirs}")
+    print("=" * 60)
+
     ext_modules = [
         extension(
-            'nndet._C',
-            sources,
+            name='nndet._C',
+            sources=sources,
             include_dirs=include_dirs,
             define_macros=define_macros,
             extra_compile_args=extra_compile_args,
         )
     ]
-    
+
     return ext_modules
 
-requirements = resolve_requirements(os.path.join(os.path.dirname(__file__),
-                                                 'requirements.txt'))
-readme = read_file(os.path.join(os.path.dirname(__file__), "README.md"))
 
+# Main setup call - pyproject.toml handles most metadata
 setup(
-    name='nndet',
-    version="v0.1",
-    packages=find_packages(),
-    # include_package_data=True,
-    test_suite="unittest",
-    long_description=readme,
-    long_description_content_type='text/markdown',
-    install_requires=requirements,
-    tests_require=["coverage"],
-    python_requires=">=3.9",
-    author="Division of Medical Image Computing, German Cancer Research Center",
-    maintainer_email='m.baumgartner@dkfz-heidelberg.de',
     ext_modules=get_extensions(),
     cmdclass={
-        'build_ext': BuildExtension,
+        'build_ext': BuildExtension.with_options(parallel=True),
         'clean': clean,
     },
-    entry_points={
-        'console_scripts': [
-            'nndet_example = scripts.generate_example:main',
-
-            'nndet_prep = scripts.preprocess:main',
-            'nndet_cls2fg = scripts.convert_cls2fg:main',
-            'nndet_seg2det = scripts.convert_seg2det:main',
-
-            'nndet_train = scripts.train:train',
-            'nndet_sweep = scripts.train:sweep',
-
-            'nndet_eval = scripts.train:evaluate',
-            'nndet_predict = scripts.predict:main',
-            'nndet_consolidate = scripts.consolidate:main',
-
-            'nndet_boxes2nii = scripts.utils:boxes2nii',
-            'nndet_seg2nii = scripts.utils:seg2nii',
-            'nndet_unpack = scripts.utils:unpack',
-            'nndet_env = scripts.utils:env',
-            'nndet_searchpath = scripts.utils:hydra_searchpath',
-
-            'nndet_torch2onnx = scripts.convert_torch2onnx:main'
-        ]
-    },
+    zip_safe=False,  # Required for C++ extensions
 )

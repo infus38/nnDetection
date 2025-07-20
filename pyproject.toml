@@ -1,0 +1,105 @@
+[build-system]
+requires = [
+    "setuptools>=64",
+    "wheel",
+    "torch>=2.5.0",
+    "ninja",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nndet"
+version = "0.1.0"
+description = "nnDetection: A self-configuring method for medical object detection"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Division of Medical Image Computing", email = "m.baumgartner@dkfz-heidelberg.de"},
+]
+
+dependencies = [
+    # Core Libraries
+    "numpy==2.0.2",
+    "pandas==2.3.0",
+    "scipy==1.13.1",
+    # Machine Learning Frameworks and Tools
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "onnx==1.18.0",
+    "onnxsim==0.4.36",
+    "onnxscript==0.3.0",
+    "mlflow==3.1.0",
+    "scikit-learn==1.6.1",
+    "nnunet==1.7.1",
+    "pytorch-lightning==2.5.2",
+    "nevergrad==1.0.12",
+    # Image Processing and Generative Tools
+    "SimpleITK==2.5.2",
+    "scikit-image==0.24.0",
+    "batchgenerators==0.25.1",
+    # Visualization Libraries
+    "matplotlib==3.9.4",
+    "seaborn==0.13.2",
+    # Configuration and Utility Libraries
+    "omegaconf==2.3.0",
+    "hydra-core==1.3.2",
+    "ninja==1.11.1.4",
+    # Utilities
+    "tqdm",
+    "wheel",
+    "loguru",
+]
+
+[project.urls]
+Homepage = "https://github.com/MIC-DKFZ/nnDetection"
+Repository = "https://github.com/MIC-DKFZ/nnDetection.git"
+Documentation = "https://github.com/MIC-DKFZ/nnDetection"
+"Bug Tracker" = "https://github.com/MIC-DKFZ/nnDetection/issues"
+
+[project.scripts]
+nndet_example = "scripts.generate_example:main"
+nndet_prep = "scripts.preprocess:main"
+nndet_cls2fg = "scripts.convert_cls2fg:main"
+nndet_seg2det = "scripts.convert_seg2det:main"
+nndet_train = "scripts.train:train"
+nndet_sweep = "scripts.train:sweep"
+nndet_eval = "scripts.train:evaluate"
+nndet_predict = "scripts.predict:main"
+nndet_consolidate = "scripts.consolidate:main"
+nndet_boxes2nii = "scripts.utils:boxes2nii"
+nndet_seg2nii = "scripts.utils:seg2nii"
+nndet_unpack = "scripts.utils:unpack"
+nndet_env = "scripts.utils:env"
+nndet_searchpath = "scripts.utils:hydra_searchpath"
+nndet_torch2onnx = "scripts.convert_torch2onnx:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nndet*", "scripts*"]
+
+[tool.setuptools.package-data]
+nndet = [
+    "conf/**/*.yaml",
+    "conf/**/*.yml",
+    "csrc/**/*.cpp",
+    "csrc/**/*.cu",
+    "csrc/**/*.h",
+    "csrc/**/*.cuh",
+]
+
+# Additional files for source distribution
+"*" = [
+    "README.md",
+    "LICENSE*",
+    "LICENSES/*",
+    "projects/**/*.md",
+    "projects/**/*.py",
+    "projects/**/*.pkl",
+    "docs/**/*.md",
+    "docs/**/*.svg",
+    "docs/**/*.png",
+]
