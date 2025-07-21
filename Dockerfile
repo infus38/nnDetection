@@ -16,11 +16,20 @@ FROM registry.access.redhat.com/ubi9/python-39:9.6-1749743801
     # - cuda-nvcc: NVIDIA CUDA compiler
     # - cuda-compiler: Meta package for compiler tools
     # - cuda-libraries-devel: Libraries for CUDA-based development
+    # - cuda-cudnn: NVIDIA cuDNN library for deep neural networks
+    # - cuda-cupti: NVIDIA CUDA Profiling Tools Interface (CUPTI) for performance analysis
+    # - cuda-cusparse: NVIDIA cuSPARSE library for sparse matrix operations
+    # - libnccl: NVIDIA Collective Communications Library (NCCL) for multi-GPU communication
+    RUN dnf list available
     RUN dnf install -y \
             cuda-cudart-devel-12-8 \
             cuda-nvcc-12-8 \
             cuda-compiler-12-8 \
-            cuda-libraries-devel-12-8
+            cuda-libraries-devel-12-8 \
+            cudnn9-cuda-12-8 \
+            cuda-cupti-12-8 \
+            libcusparselt0 \
+            libnccl
 
     # Configure environment variables to include CUDA binaries and libraries
     ENV PATH="/usr/local/cuda-12.8/bin:${PATH}"
@@ -32,17 +41,6 @@ FROM registry.access.redhat.com/ubi9/python-39:9.6-1749743801
     RUN wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.sh && \
         sh cmake-3.29.2-linux-x86_64.sh --skip-license --prefix=/usr/local && \
         rm cmake-3.29.2-linux-x86_64.sh
-
-    # -----------------------------------------------------------------------------
-    # Python Dependencies
-    # -----------------------------------------------------------------------------
-    RUN pip3 install --upgrade pip && \
-        pip3 install \
-            torch==2.7.1 \
-            torchvision==0.22.1 \
-            --index-url https://download.pytorch.org/whl/cu128
-
-    RUN pip3 install wheel ninja==1.11.1.4
 
     # -----------------------------------------------------------------------------
     # Application Configuration
@@ -79,4 +77,4 @@ FROM registry.access.redhat.com/ubi9/python-39:9.6-1749743801
     # - --no-build-isolation: Ensures the  build  utilizes  the  pre-installed
     #   CUDA environment and dependencies
     # - FORCE_CUDA=1: Explicitly enables CUDA support during the build process
-    RUN FORCE_CUDA=1 pip install --no-build-isolation -e .
+    RUN FORCE_CUDA=1 pip install -e .
