@@ -20,7 +20,6 @@ FROM registry.access.redhat.com/ubi9/python-39:9.6-1749743801
     # - cuda-cupti: NVIDIA CUDA Profiling Tools Interface (CUPTI) for performance analysis
     # - cuda-cusparse: NVIDIA cuSPARSE library for sparse matrix operations
     # - libnccl: NVIDIA Collective Communications Library (NCCL) for multi-GPU communication
-    RUN dnf list available
     RUN dnf install -y \
             cuda-cudart-devel-12-8 \
             cuda-nvcc-12-8 \
